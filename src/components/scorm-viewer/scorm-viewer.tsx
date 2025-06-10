@@ -40,12 +40,13 @@ export class SCORMViewer {
     }
 
     private _attachEvents() {
-        this.scormWindow = this.topmostWindow as CourseWindow;
-        // If the window already has an API binding - skip
-        if (this.scormWindow.API) {
-            return;
-        }
         try {
+            this.scormWindow = this.topmostWindow as CourseWindow;
+            // If the window already has an API binding - skip
+            if (this.scormWindow.API) {
+                return;
+            }
+            
             this.scormWindow.API = {
                 Initiailize: this.initialize,
                 LMSInitialize: this.initialize,
@@ -69,6 +70,8 @@ export class SCORMViewer {
             // Backwards compatability for SCORM 2004 3rd Edition
             this.scormWindow.API_1484_11 = this.scormWindow.API;
         } catch (error) {
+            // Handle cross-origin access errors gracefully
+            console.warn('SCORM Viewer: Unable to attach API to top-level window due to cross-origin restrictions. SCORM functionality may be limited.');
             this.error.emit(error);
         }
     }
@@ -149,23 +152,34 @@ export class SCORMViewer {
      * Returns true if the API was successfully disconnected.
      */
     terminate() {
+        this.onTerminate.emit();
         return "true";
     }
 
     /**
      * SCORM only cares about the topmost window frame for checking for important information.
      * Recursively climb the window tree to find the best window to attach to.
+     * Handles cross-origin restrictions gracefully.
      */
     get topmostWindow(): Window {
         let tempWindow = window;
         let attempts = 0;
-        while(tempWindow.parent !== null && tempWindow.parent !== tempWindow) {
-            attempts++;
-            tempWindow = tempWindow.parent;
-            if (attempts > 7) {
-                break;
+        
+        try {
+            while(tempWindow.parent !== null && tempWindow.parent !== tempWindow) {
+                attempts++;
+                // Test if we can access the parent window
+                tempWindow.parent.location.href;
+                tempWindow = tempWindow.parent;
+                if (attempts > 7) {
+                    break;
+                }
             }
+        } catch (error) {
+            // Cross-origin access blocked, return the current accessible window
+            console.warn('SCORM Viewer: Cross-origin access blocked, using current window context');
         }
+        
         return tempWindow;
     }
 
