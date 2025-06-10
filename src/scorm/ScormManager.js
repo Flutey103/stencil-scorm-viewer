@@ -2,17 +2,84 @@ export class ScormManager {
     constructor() {
         this.storageKey = 'scorm-courses';
         this.dataKey = 'scorm-data';
+        this.dbName = 'scorm-files-db';
+        this.dbVersion = 1;
+        this.filesStoreName = 'course-files';
+    }
+
+    // Initialize IndexedDB
+    async initDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, this.dbVersion);
+            
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => resolve(request.result);
+            
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains(this.filesStoreName)) {
+                    db.createObjectStore(this.filesStoreName, { keyPath: 'courseId' });
+                }
+            };
+        });
+    }
+
+    // Store files in IndexedDB
+    async storeFilesInIndexedDB(courseId, files) {
+        const db = await this.initDB();
+        const transaction = db.transaction([this.filesStoreName], 'readwrite');
+        const store = transaction.objectStore(this.filesStoreName);
+        
+        return new Promise((resolve, reject) => {
+            const request = store.put({ courseId, files });
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    // Retrieve files from IndexedDB
+    async getFilesFromIndexedDB(courseId) {
+        const db = await this.initDB();
+        const transaction = db.transaction([this.filesStoreName], 'readonly');
+        const store = transaction.objectStore(this.filesStoreName);
+        
+        return new Promise((resolve, reject) => {
+            const request = store.get(courseId);
+            request.onsuccess = () => {
+                const result = request.result;
+                resolve(result ? result.files : null);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    // Delete files from IndexedDB
+    async deleteFilesFromIndexedDB(courseId) {
+        const db = await this.initDB();
+        const transaction = db.transaction([this.filesStoreName], 'readwrite');
+        const store = transaction.objectStore(this.filesStoreName);
+        
+        return new Promise((resolve, reject) => {
+            const request = store.delete(courseId);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
     }
 
     async saveCourse(courseData) {
         const courses = await this.getCourses();
         const courseId = this.generateId();
         
+        // Store files in IndexedDB
+        if (courseData.files) {
+            await this.storeFilesInIndexedDB(courseId, courseData.files);
+        }
+        
+        // Store only metadata in localStorage (without files)
         const course = {
             id: courseId,
             title: courseData.title || 'Untitled Course',
             description: courseData.description || '',
-            files: courseData.files,
             manifest: courseData.manifest,
             entryPoint: courseData.entryPoint,
             uploadDate: new Date().toISOString(),
@@ -39,13 +106,27 @@ export class ScormManager {
 
     async getCourse(courseId) {
         const courses = await this.getCourses();
-        return courses[courseId] || null;
+        const course = courses[courseId];
+        
+        if (!course) {
+            return null;
+        }
+        
+        // Retrieve files from IndexedDB and add to course object
+        const files = await this.getFilesFromIndexedDB(courseId);
+        return {
+            ...course,
+            files: files
+        };
     }
 
     async deleteCourse(courseId) {
         const courses = await this.getCourses();
         delete courses[courseId];
         localStorage.setItem(this.storageKey, JSON.stringify(courses));
+        
+        // Delete files from IndexedDB
+        await this.deleteFilesFromIndexedDB(courseId);
         
         // Also delete course data
         const courseDataKey = `${this.dataKey}-${courseId}`;
