@@ -315,8 +315,15 @@ export class ScormPlayer {
     }
 
     async saveCourseData() {
-        if (this.currentCourse && this.scormManager) {
-            await this.scormManager.setCourseData(this.currentCourse.id, this.courseData);
+        // Capture current course and scorm manager before any await calls
+        // to prevent race condition where stop() might set them to null
+        const currentCourse = this.currentCourse;
+        const scormManager = this.scormManager;
+        
+        if (currentCourse && scormManager) {
+            const courseId = currentCourse.id;
+            
+            await scormManager.setCourseData(courseId, this.courseData);
             
             // Update course progress
             const progressData = {
@@ -326,7 +333,7 @@ export class ScormPlayer {
                 totalTime: this.courseData['cmi.core.total_time'] || '00:00:00'
             };
             
-            await this.scormManager.updateCourseProgress(this.currentCourse.id, progressData);
+            await scormManager.updateCourseProgress(courseId, progressData);
         }
     }
 
