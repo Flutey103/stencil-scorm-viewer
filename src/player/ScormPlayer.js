@@ -36,9 +36,23 @@ export class ScormPlayer {
             GetDiagnostic: (errorCode) => this.getDiagnostic(errorCode)
         };
 
-        // Make API available globally
+        // Make API available globally and in parent frames
         window.API = this.scormAPI;
         window.API_1484_11 = this.scormAPI;
+        
+        // Also make it available on parent windows for iframe access
+        try {
+            if (window.parent && window.parent !== window) {
+                window.parent.API = this.scormAPI;
+                window.parent.API_1484_11 = this.scormAPI;
+            }
+            if (window.top && window.top !== window) {
+                window.top.API = this.scormAPI;
+                window.top.API_1484_11 = this.scormAPI;
+            }
+        } catch (error) {
+            console.warn('Could not set API on parent windows:', error);
+        }
     }
 
     async load(course) {
@@ -62,6 +76,9 @@ export class ScormPlayer {
         // Set up iframe load handler
         iframe.onload = () => {
             this.injectAPI(iframe);
+            // Also try to inject after a delay to handle dynamic content
+            setTimeout(() => this.injectAPI(iframe), 1000);
+            setTimeout(() => this.injectAPI(iframe), 3000);
         };
     }
 
@@ -162,11 +179,26 @@ export class ScormPlayer {
 
     injectAPI(iframe) {
         try {
-            // Try to inject API into iframe
+            console.log('Attempting to inject SCORM API into iframe...');
             const iframeWindow = iframe.contentWindow;
             if (iframeWindow) {
                 iframeWindow.API = this.scormAPI;
                 iframeWindow.API_1484_11 = this.scormAPI;
+                console.log('SCORM API injected successfully');
+                
+                // Also try to inject into the iframe's parent references
+                try {
+                    if (iframeWindow.parent) {
+                        iframeWindow.parent.API = this.scormAPI;
+                        iframeWindow.parent.API_1484_11 = this.scormAPI;
+                    }
+                    if (iframeWindow.top) {
+                        iframeWindow.top.API = this.scormAPI;
+                        iframeWindow.top.API_1484_11 = this.scormAPI;
+                    }
+                } catch (e) {
+                    console.warn('Could not inject API into iframe parent references:', e);
+                }
             }
         } catch (error) {
             console.warn('Could not inject API into iframe (cross-origin):', error);
@@ -178,6 +210,7 @@ export class ScormPlayer {
         console.log('SCORM: Initialize called');
         this.startTime = Date.now();
         this.updateCourseStatus('incomplete');
+        this.updateScormDataDisplay();
         return 'true';
     }
 
@@ -191,43 +224,55 @@ export class ScormPlayer {
     getValue(element) {
         console.log('SCORM: GetValue called for', element);
         
+        let value;
         // Handle standard SCORM elements
         switch (element) {
             case 'cmi.core.lesson_status':
             case 'cmi.completion_status':
-                return this.courseData.lesson_status || 'not attempted';
+                value = this.courseData.lesson_status || 'not attempted';
+                break;
             
             case 'cmi.core.score.raw':
             case 'cmi.score.raw':
-                return this.courseData.score_raw || '';
+                value = this.courseData.score_raw || '';
+                break;
             
             case 'cmi.core.score.min':
             case 'cmi.score.min':
-                return this.courseData.score_min || '0';
+                value = this.courseData.score_min || '0';
+                break;
             
             case 'cmi.core.score.max':
             case 'cmi.score.max':
-                return this.courseData.score_max || '100';
+                value = this.courseData.score_max || '100';
+                break;
             
             case 'cmi.core.session_time':
             case 'cmi.session_time':
-                return this.formatTime(this.sessionTime);
+                value = this.formatTime(this.sessionTime);
+                break;
             
             case 'cmi.core.total_time':
             case 'cmi.total_time':
-                return this.courseData.total_time || '00:00:00';
+                value = this.courseData.total_time || '00:00:00';
+                break;
             
             case 'cmi.core.student_id':
             case 'cmi.learner_id':
-                return 'student_001';
+                value = 'student_001';
+                break;
             
             case 'cmi.core.student_name':
             case 'cmi.learner_name':
-                return 'Student';
+                value = 'Student';
+                break;
             
             default:
-                return this.courseData[element] || '';
+                value = this.courseData[element] || '';
         }
+        
+        console.log(`SCORM: GetValue(${element}) = ${value}`);
+        return value;
     }
 
     setValue(element, value) {
@@ -306,12 +351,38 @@ export class ScormPlayer {
 
     updateScormDataDisplay() {
         const dataContent = document.getElementById('scorm-data-content');
-        const dataEntries = Object.entries(this.courseData)
-            .filter(([key]) => key.startsWith('cmi.'))
-            .map(([key, value]) => `<div><strong>${key}:</strong> ${value}</div>`)
+        
+        if (!dataContent) return;
+        
+        const allEntries = Object.entries(this.courseData);
+        
+        if (allEntries.length === 0) {
+            dataContent.innerHTML = `
+                <div style="color: #94a3b8; font-style: italic;">
+                    No SCORM data yet. The course needs to call SCORM API methods to store data.
+                </div>
+                <div style="margin-top: 0.5rem; font-size: 0.7rem; color: #94a3b8;">
+                    API Status: ${window.API ? '✓ Available' : '✗ Not Available'}
+                </div>
+            `;
+            return;
+        }
+        
+        const dataEntries = allEntries
+            .map(([key, value]) => `
+                <div style="margin-bottom: 0.25rem; padding: 0.25rem; background: #f8fafc; border-radius: 4px;">
+                    <strong style="color: #475569;">${key}:</strong> 
+                    <span style="color: #64748b;">${value}</span>
+                </div>
+            `)
             .join('');
         
-        dataContent.innerHTML = dataEntries || '<div>No SCORM data yet</div>';
+        dataContent.innerHTML = `
+            <div style="margin-bottom: 0.5rem; font-size: 0.7rem; color: #10b981;">
+                API Status: ✓ Active (${allEntries.length} data points)
+            </div>
+            ${dataEntries}
+        `;
     }
 
     async saveCourseData() {
@@ -351,5 +422,8 @@ export class ScormPlayer {
         this.courseData = {};
         this.startTime = null;
         this.sessionTime = 0;
+        
+        // Update display
+        this.updateScormDataDisplay();
     }
 }
