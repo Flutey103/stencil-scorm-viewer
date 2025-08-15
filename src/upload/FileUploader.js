@@ -179,6 +179,83 @@ export class FileUploader {
         return null;
     }
 
+    processHtmlContent(htmlContent, files) {
+        // Replace relative file references with blob URLs
+        let processed = htmlContent;
+
+        // Inject SCORM API finder script at the beginning of the HTML
+        const apiFinderScript = `
+<script>
+// SCORM API Finder - helps courses locate the API
+(function() {
+    function findAPI(win) {
+        var attempts = 0;
+        while ((win.API == null || win.API_1484_11 == null) && (win.parent != null) && (win.parent != win)) {
+            attempts++;
+            if (attempts > 7) {
+                return null;
+            }
+            win = win.parent;
+        }
+        return win.API || win.API_1484_11;
+    }
+    
+    // Make API available globally for courses that expect it
+    if (!window.API && !window.API_1484_11) {
+        var api = findAPI(window);
+        if (api) {
+            window.API = api;
+            window.API_1484_11 = api;
+            console.log('SCORM API found and attached to course window');
+        } else {
+            console.warn('SCORM API not found');
+        }
+    }
+})();
+</script>
+        `;
+
+        // Find all src and href attributes
+        const srcRegex = /(src|href)=["']([^"']+)["']/gi;
+        
+        processed = processed.replace(srcRegex, (match, attr, path) => {
+            // Skip absolute URLs
+            if (path.startsWith('http') || path.startsWith('//') || path.startsWith('data:')) {
+                return match;
+            }
+
+            // Check if file exists in package
+            if (files[path]) {
+                const fileContent = files[path];
+                let mimeType = this.getMimeType(path);
+                
+                // Handle base64 encoded files
+                if (this.isBinaryFile(path)) {
+                    const blob = this.base64ToBlob(fileContent, mimeType);
+                    const blobUrl = URL.createObjectURL(blob);
+                    return `${attr}="${blobUrl}"`;
+                } else {
+                    const blob = new Blob([fileContent], { type: mimeType });
+                    const blobUrl = URL.createObjectURL(blob);
+                    return `${attr}="${blobUrl}"`;
+                }
+            }
+
+            return match;
+        });
+
+        // Inject the API finder script after the <head> tag or at the beginning if no head tag
+        if (processed.includes('<head>')) {
+            processed = processed.replace('<head>', '<head>' + apiFinderScript);
+        } else if (processed.includes('<html>')) {
+            processed = processed.replace('<html>', '<html>' + apiFinderScript);
+        } else {
+            processed = apiFinderScript + processed;
+        }
+
+        return processed;
+    }
+
     isBinaryFile(path) {
         const binaryExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.ico', 
                                  '.mp3', '.mp4', '.wav', '.avi', '.mov', '.pdf', '.swf',
